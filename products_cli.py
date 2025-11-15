@@ -3289,30 +3289,13 @@ class ProductsCLI:
                     'updatedAt': current_time
                 })
             
-            # Prepare assigned shifts (if delivery type selected)
-            assigned_shifts = []
-            if delivery_types and self.delivery_types_table:
-                try:
-                    for dt in delivery_types:
-                        shift_response = self.delivery_types_table.scan(
-                            FilterExpression="deliveryType = :dt",
-                            ExpressionAttributeValues={":dt": dt}
-                        )
-                        shifts = shift_response.get('Items', [])
-                        if shifts:
-                            assigned_shifts.append(shifts[0])
-                except:
-                    pass
-            
             # Create pincode item
             pincode_item = {
                 'pincodeID': pincode_id,
-                'id': pincode_id,
                 'pincodeNumber': pincode_number,
                 'status': status,
                 'deliveryTypes': delivery_types,
                 'areas': areas_with_id,
-                'assignedShifts': assigned_shifts,
                 'charges': charges,
                 'createdAt': current_time,
                 'updatedAt': current_time
@@ -3460,16 +3443,6 @@ class ProductsCLI:
                     print(f"  {idx}. Min Order: {min_str}, Charge: {charge_str} ({status_str})")
             else:
                 print(f"\n💰 Delivery Charges: Not configured")
-            
-            # Assigned Shifts
-            assigned_shifts = pincode.get('assignedShifts', [])
-            if assigned_shifts:
-                print(f"\n🕐 Assigned Shifts ({len(assigned_shifts)}):")
-                for idx, shift in enumerate(assigned_shifts, 1):
-                    shift_type = shift.get('deliveryType', 'N/A')
-                    print(f"  {idx}. {shift_type}")
-            else:
-                print(f"\n🕐 Assigned Shifts: None")
             
         except Exception as e:
             print(f"❌ ERROR: {e}")
@@ -3739,28 +3712,11 @@ class ProductsCLI:
             elif status_choice == '2':
                 new_status = 'Inactive'
             
-            # Update assigned shifts if delivery types changed
-            new_assigned_shifts = pincode.get('assignedShifts', [])
-            if new_delivery_types != current_delivery_types and self.delivery_types_table:
-                try:
-                    new_assigned_shifts = []
-                    for dt in new_delivery_types:
-                        shift_response = self.delivery_types_table.scan(
-                            FilterExpression="deliveryType = :dt",
-                            ExpressionAttributeValues={":dt": dt}
-                        )
-                        shifts = shift_response.get('Items', [])
-                        if shifts:
-                            new_assigned_shifts.append(shifts[0])
-                except:
-                    pass
-            
             # Update pincode
             updated_time = datetime.now(timezone.utc).isoformat()
             pincode['pincodeNumber'] = new_pincode_num
             pincode['areas'] = new_areas
             pincode['deliveryTypes'] = new_delivery_types
-            pincode['assignedShifts'] = new_assigned_shifts
             pincode['charges'] = new_charges
             pincode['status'] = new_status
             pincode['updatedAt'] = updated_time
@@ -3857,10 +3813,11 @@ class ProductsCLI:
             print("4. ✏️  Update Delivery Type")
             print("5. 🗑️  Delete Delivery Type")
             print("6. 🕐 Manage Time Slots")
+            print("7. 📍 Assign Delivery Type to Pincode")
             print("0. ⬅️  Back to Pincode Management")
             print("-" * 80)
             
-            choice = input("\nSelect an option (0-6): ").strip()
+            choice = input("\nSelect an option (0-7): ").strip()
             
             if choice == '0':
                 break
@@ -3893,8 +3850,11 @@ class ProductsCLI:
                 input("\nPress Enter to continue...")
             elif choice == '6':
                 self.time_slots_management_menu()
+            elif choice == '7':
+                self.assign_delivery_type_to_pincode()
+                input("\nPress Enter to continue...")
             else:
-                print("❌ ERROR: Invalid choice. Please select a number between 0-6.")
+                print("❌ ERROR: Invalid choice. Please select a number between 0-7.")
                 input("\nPress Enter to continue...")
 
     def time_slots_management_menu(self):
@@ -4710,6 +4670,160 @@ class ProductsCLI:
         """Toggle time slot status"""
         print("\n⚠️  NOTE: Time slot status toggle will be implemented.")
         # TODO: Implement
+    
+    def assign_delivery_type_to_pincode(self):
+        """Assign delivery type(s) to a pincode"""
+        print("\n" + "=" * 80)
+        print("📍 ASSIGN DELIVERY TYPE TO PINCODE")
+        print("=" * 80)
+        
+        try:
+            if not self.pincodes_table:
+                print("\n❌ ERROR: Pincode_management table not found!")
+                return
+            
+            if not self.delivery_types_table:
+                print("\n❌ ERROR: Delivery_types table not found!")
+                return
+            
+            # Step 1: List and select pincode
+            print("\n📋 Available Pincodes:")
+            response = self.pincodes_table.scan()
+            pincodes = response.get('Items', [])
+            
+            while 'LastEvaluatedKey' in response:
+                response = self.pincodes_table.scan(
+                    ExclusiveStartKey=response['LastEvaluatedKey']
+                )
+                pincodes.extend(response.get('Items', []))
+            
+            if not pincodes:
+                print("\n❌ ERROR: No pincodes found!")
+                return
+            
+            # Filter active pincodes
+            active_pincodes = [p for p in pincodes if p.get('status') == 'Active']
+            
+            if not active_pincodes:
+                print("\n❌ ERROR: No active pincodes found!")
+                return
+            
+            print("-" * 80)
+            for idx, pincode in enumerate(active_pincodes, 1):
+                pincode_id = pincode.get('pincodeID', 'N/A')
+                pincode_num = pincode.get('pincodeNumber', 'N/A')
+                current_dts = pincode.get('deliveryTypes', [])
+                dt_str = ', '.join(current_dts) if current_dts else 'None'
+                print(f"{idx}. {pincode_num} (ID: {pincode_id}) - Current Delivery Types: {dt_str}")
+            
+            pincode_choice = input(f"\nSelect Pincode (1-{len(active_pincodes)}): ").strip()
+            try:
+                pincode_idx = int(pincode_choice) - 1
+                if pincode_idx < 0 or pincode_idx >= len(active_pincodes):
+                    print("❌ ERROR: Invalid selection!")
+                    return
+                selected_pincode = active_pincodes[pincode_idx]
+            except ValueError:
+                print("❌ ERROR: Invalid input! Please enter a number.")
+                return
+            
+            pincode_id = selected_pincode.get('pincodeID')
+            pincode_num = selected_pincode.get('pincodeNumber', 'N/A')
+            current_delivery_types = selected_pincode.get('deliveryTypes', [])
+            
+            print(f"\n✅ Selected: {pincode_num} (ID: {pincode_id})")
+            if current_delivery_types:
+                print(f"   Current Delivery Types: {', '.join(current_delivery_types)}")
+            else:
+                print(f"   Current Delivery Types: None")
+            
+            # Step 2: List and select delivery types
+            print("\n🚚 Available Delivery Types:")
+            dt_response = self.delivery_types_table.scan()
+            delivery_types = dt_response.get('Items', [])
+            
+            while 'LastEvaluatedKey' in dt_response:
+                dt_response = self.delivery_types_table.scan(
+                    ExclusiveStartKey=dt_response['LastEvaluatedKey']
+                )
+                delivery_types.extend(dt_response.get('Items', []))
+            
+            # Filter active delivery types
+            active_delivery_types = [dt for dt in delivery_types if dt.get('isActive', True)]
+            
+            if not active_delivery_types:
+                print("\n❌ ERROR: No active delivery types found!")
+                return
+            
+            print("-" * 80)
+            for idx, dt in enumerate(active_delivery_types, 1):
+                dt_id = dt.get('Delivery_type_id', 'N/A')
+                dt_name = dt.get('deliveryType', 'N/A')
+                slots = dt.get('slots', [])
+                active_slots = [s for s in slots if s.get('isActive', True)]
+                is_assigned = dt_name in current_delivery_types
+                assigned_mark = " ✓ (Already Assigned)" if is_assigned else ""
+                print(f"{idx}. {dt_name} (ID: {dt_id}) - Slots: {len(active_slots)}{assigned_mark}")
+            
+            print("\n💡 You can select multiple delivery types by entering numbers separated by commas (e.g., 1,2,3)")
+            dt_choices = input(f"\nSelect Delivery Type(s) (1-{len(active_delivery_types)}): ").strip()
+            
+            if not dt_choices:
+                print("❌ ERROR: At least one delivery type must be selected!")
+                return
+            
+            # Parse multiple selections
+            selected_indices = []
+            for choice in dt_choices.split(','):
+                try:
+                    idx = int(choice.strip()) - 1
+                    if 0 <= idx < len(active_delivery_types):
+                        selected_indices.append(idx)
+                except ValueError:
+                    pass
+            
+            if not selected_indices:
+                print("❌ ERROR: Invalid selection!")
+                return
+            
+            # Get selected delivery types
+            selected_delivery_types = []
+            selected_dt_names = []
+            for idx in selected_indices:
+                dt = active_delivery_types[idx]
+                dt_name = dt.get('deliveryType', '')
+                if dt_name:
+                    selected_delivery_types.append(dt)
+                    selected_dt_names.append(dt_name)
+            
+            if not selected_delivery_types:
+                print("❌ ERROR: No valid delivery types selected!")
+                return
+            
+            # Step 3: Update pincode
+            print(f"\n📝 Assigning delivery types to pincode {pincode_num}:")
+            for dt_name in selected_dt_names:
+                print(f"   - {dt_name}")
+            
+            confirm = input("\n✅ Confirm assignment? (y/n): ").strip().lower()
+            if confirm != 'y':
+                print("❌ Assignment cancelled.")
+                return
+            
+            # Update pincode's deliveryTypes array
+            selected_pincode['deliveryTypes'] = selected_dt_names
+            selected_pincode['updatedAt'] = datetime.now(timezone.utc).isoformat()
+            
+            self.pincodes_table.put_item(Item=selected_pincode)
+            
+            print(f"\n✅ SUCCESS: Delivery types assigned successfully!")
+            print(f"   Pincode: {pincode_num} (ID: {pincode_id})")
+            print(f"   Assigned Delivery Types: {', '.join(selected_dt_names)}")
+            
+        except Exception as e:
+            print(f"❌ ERROR: {e}")
+            import traceback
+            traceback.print_exc()
 
     # ==================== DELIVERY CHARGES MANAGEMENT FUNCTIONS ====================
     # Note: Delivery charges are stored nested inside Pincode_management table
@@ -5109,6 +5223,79 @@ class ProductsCLI:
             print(f"⚠️  Error getting delivery charge: {e}")
             return Decimal('0')
     
+    def get_pincode_by_number(self, pincode_number: str) -> Optional[Dict[str, Any]]:
+        """Fetch pincode record by pincode number"""
+        try:
+            if not self.pincodes_table:
+                return None
+            
+            response = self.pincodes_table.scan(
+                FilterExpression='pincodeNumber = :pincode',
+                ExpressionAttributeValues={':pincode': pincode_number}
+            )
+            pincodes = response.get('Items', [])
+            
+            while 'LastEvaluatedKey' in response:
+                response = self.pincodes_table.scan(
+                    FilterExpression='pincodeNumber = :pincode',
+                    ExpressionAttributeValues={':pincode': pincode_number},
+                    ExclusiveStartKey=response['LastEvaluatedKey']
+                )
+                pincodes.extend(response.get('Items', []))
+            
+            return pincodes[0] if pincodes else None
+        except Exception as e:
+            print(f"⚠️  Error finding pincode: {e}")
+            return None
+    
+    def get_available_slots_for_pincode(self, pincode_data: Dict[str, Any]) -> List[Dict[str, str]]:
+        """Return list of active slots assigned to a pincode"""
+        slots: List[Dict[str, str]] = []
+        seen = set()
+        
+        def add_slots_from_source(source: Dict[str, Any], source_name: str):
+            for slot in source.get('slots', []):
+                if not slot.get('isActive', True):
+                    continue
+                slot_name = slot.get('name', 'N/A')
+                start_time = slot.get('startTime', 'N/A')
+                end_time = slot.get('endTime', 'N/A')
+                slot_time = f"{start_time} - {end_time}"
+                key = (slot_name, slot_time, source_name)
+                if key in seen:
+                    continue
+                seen.add(key)
+                slots.append({
+                    'name': slot_name,
+                    'time': slot_time,
+                    'full_string': f"{slot_time} ({slot_name})",
+                    'delivery_type': source_name
+                })
+        
+        # Get slots from delivery type names list
+        if not slots:
+            delivery_type_names = pincode_data.get('deliveryTypes', [])
+            if delivery_type_names and self.delivery_types_table:
+                delivery_type_set = set(delivery_type_names)
+                try:
+                    response = self.delivery_types_table.scan()
+                    delivery_types = response.get('Items', [])
+                    
+                    while 'LastEvaluatedKey' in response:
+                        response = self.delivery_types_table.scan(
+                            ExclusiveStartKey=response['LastEvaluatedKey']
+                        )
+                        delivery_types.extend(response.get('Items', []))
+                    
+                    for dt in delivery_types:
+                        dt_name = dt.get('deliveryType', '')
+                        if dt_name in delivery_type_set and dt.get('isActive', True):
+                            add_slots_from_source(dt, dt_name)
+                except Exception as e:
+                    print(f"⚠️  Error loading delivery slots: {e}")
+        
+        return slots
+    
     def order_management_menu(self):
         """Display order management menu"""
         if not self.orders_table:
@@ -5307,6 +5494,28 @@ class ProductsCLI:
             
             if not all([flat_no, area, landmark, pincode]):
                 print("❌ ERROR: All address fields are required!")
+                return
+            
+            if not self.pincodes_table:
+                print("\n⚠️  WARNING: Pincode management table not connected!")
+                print("Please create the 'Pincode_management' table and configure pincodes before creating orders.")
+                return
+            
+            # Validate pincode availability
+            pincode_record = self.get_pincode_by_number(pincode)
+            if not pincode_record:
+                print(f"\n❌ ERROR: Pincode {pincode} is not serviceable. Please add it in Pincode Management before creating orders.")
+                return
+            
+            status = pincode_record.get('status', 'Inactive')
+            if status.lower() != 'active':
+                print(f"\n❌ ERROR: Pincode {pincode} is currently '{status}'. Please activate it before creating orders.")
+                return
+            
+            available_slots = self.get_available_slots_for_pincode(pincode_record)
+            if not available_slots:
+                print(f"\n❌ ERROR: No delivery slots configured for pincode {pincode}.")
+                print("Please assign delivery types and slots in Pincode Management before creating orders.")
                 return
             
             customer_id = self.generate_customer_id()
@@ -5677,6 +5886,32 @@ class ProductsCLI:
                 print("❌ ERROR: All address fields are required!")
                 return
             
+            # Validate pincode and get available slots
+            available_slots = []
+            if not self.pincodes_table:
+                print("\n⚠️  WARNING: Pincode management table not connected!")
+                print("Please create the 'Pincode_management' table and configure pincodes before creating orders.")
+                return
+            
+            # Validate pincode availability
+            pincode_record = self.get_pincode_by_number(pincode)
+            if not pincode_record:
+                print(f"\n❌ ERROR: Pincode {pincode} is not serviceable.")
+                print("Please add this pincode in Pincode Management before creating orders.")
+                return
+            
+            status = pincode_record.get('status', 'Inactive')
+            if status.lower() != 'active':
+                print(f"\n❌ ERROR: Pincode {pincode} is currently '{status}'.")
+                print("Please activate it in Pincode Management before creating orders.")
+                return
+            
+            available_slots = self.get_available_slots_for_pincode(pincode_record)
+            if not available_slots:
+                print(f"\n❌ ERROR: No delivery slots configured for pincode {pincode}.")
+                print("Please assign delivery types and create time slots in Pincode Management before creating orders.")
+                return
+            
             # If customer not found, ask if they want to save as new customer
             if not customer:
                 save_customer = input("\n💾 Save as new customer? (y/n, default: n): ").strip().lower() == 'y'
@@ -5851,8 +6086,7 @@ class ProductsCLI:
                         'quantity': quantity,
                         'price': selected_product['price'],
                         'subtotal': subtotal,
-                        'unit': selected_product['unit'],
-                        'is_substituted': False
+                        'unit': selected_product['unit']
                     })
                     
                     print(f"✅ Added: {selected_product['name']} - Qty: {quantity} {selected_product['unit']} - ₹{subtotal}")
@@ -5874,44 +6108,29 @@ class ProductsCLI:
             today = datetime.now(timezone.utc).strftime('%Y-%m-%d')
             delivery_date = input(f"📅 Delivery Date (YYYY-MM-DD, default: {today}): ").strip() or today
             
-            # Delivery Time Slot
+            # Delivery Time Slot (must come from pincode configuration)
             delivery_slot = ""
-            if self.delivery_types_table:
-                # Get available time slots
-                response = self.delivery_types_table.scan()
-                delivery_types = response.get('Items', [])
+            if available_slots:
+                print("\n🕐 Available Time Slots for this pincode:")
+                for idx, slot in enumerate(available_slots, 1):
+                    print(f"{idx}. {slot['full_string']} - {slot['delivery_type']}")
                 
-                all_slots = []
-                for dt in delivery_types:
-                    if not dt.get('isActive', True):
-                        continue
-                    slots = dt.get('slots', [])
-                    for slot in slots:
-                        if slot.get('isActive', True):
-                            all_slots.append({
-                                'name': slot.get('name', 'N/A'),
-                                'time': f"{slot.get('startTime', 'N/A')} - {slot.get('endTime', 'N/A')}",
-                                'delivery_type': dt.get('deliveryType', 'N/A')
-                            })
-                
-                if all_slots:
-                    print("\n🕐 Available Time Slots:")
-                    for idx, slot in enumerate(all_slots, 1):
-                        print(f"{idx}. {slot['name']} ({slot['time']}) - {slot['delivery_type']}")
-                    
-                    choice = input(f"\nSelect time slot (1-{len(all_slots)}): ").strip()
-                    try:
-                        idx = int(choice) - 1
-                        if 0 <= idx < len(all_slots):
-                            selected_slot = all_slots[idx]
-                            delivery_slot = f"{selected_slot['time']} ({selected_slot['name']})"
-                    except ValueError:
-                        pass
-            
-            if not delivery_slot:
-                delivery_slot = input("🕐 Delivery Time Slot (e.g., 9:00 AM - 11:00 AM): ").strip()
-                if not delivery_slot:
-                    delivery_slot = "11:00 AM - 1:00 PM"  # Default
+                choice = input(f"\nSelect time slot (1-{len(available_slots)}): ").strip()
+                try:
+                    idx = int(choice) - 1
+                    if 0 <= idx < len(available_slots):
+                        selected_slot = available_slots[idx]
+                        delivery_slot = selected_slot['full_string']
+                    else:
+                        print("⚠️  Invalid selection, using first available slot.")
+                        delivery_slot = available_slots[0]['full_string']
+                except ValueError:
+                    print("⚠️  Invalid input, using first available slot.")
+                    delivery_slot = available_slots[0]['full_string']
+            else:
+                # This should not happen because we enforce slots above,
+                # but keep a fallback to avoid crashing.
+                delivery_slot = "11:00 AM - 1:00 PM (Afternoon)"
             
             # Payment Mode
             print("\n💳 Payment Mode:")
@@ -5965,15 +6184,14 @@ class ProductsCLI:
             
             order = {
                 'order_id': order_id,
-                'order_number': order_id,
                 'customer_id': customer_id or f"CUST-{uuid.uuid4().hex[:8]}",
                 'customer_name': customer_name,
                 'customer_phone': phone,
                 'address': full_address,
-                'lat': Decimal('0'),  # Default, can be enhanced later
-                'lng': Decimal('0'),
-                'zone': 'Zone A',  # Default, can be enhanced later
                 'pincode': pincode,
+                'subtotal': subtotal,
+                'discount': discount,
+                'shipping_charges': shipping_charges,
                 'total_amount': grand_total,
                 'payment_mode': payment_mode,
                 'status': 'Placed',
@@ -5981,18 +6199,15 @@ class ProductsCLI:
                 'delivery_slot': delivery_slot,
                 'delivery_date': delivery_date,
                 'notes': notes if notes else None,
-                'discount': discount,
-                'shipping_charges': shipping_charges,
                 'created_at': current_time,
                 'updated_at': current_time
             }
             
             # Convert Decimal values for DynamoDB
-            order['lat'] = Decimal('0')
-            order['lng'] = Decimal('0')
-            order['total_amount'] = grand_total
+            order['subtotal'] = subtotal
             order['discount'] = discount
             order['shipping_charges'] = shipping_charges
+            order['total_amount'] = grand_total
             
             # Convert items to proper format
             formatted_items = []
@@ -6004,8 +6219,7 @@ class ProductsCLI:
                     'quantity': Decimal(str(item['quantity'])),
                     'price': Decimal(str(item['price'])),
                     'subtotal': Decimal(str(item['subtotal'])),
-                    'unit': item.get('unit', ''),
-                    'is_substituted': item.get('is_substituted', False)
+                    'unit': item.get('unit', '')
                 })
             order['items'] = formatted_items
             
@@ -6014,6 +6228,9 @@ class ProductsCLI:
             print(f"\n✅ SUCCESS: Order created successfully!")
             print(f"   Order ID: {order_id}")
             print(f"   Customer: {customer_name} ({phone})")
+            print(f"   Subtotal: ₹{subtotal}")
+            print(f"   Discount: ₹{discount}")
+            print(f"   Shipping Charges: ₹{shipping_charges}")
             print(f"   Total Amount: ₹{grand_total}")
             print(f"   Status: Placed")
             
@@ -6137,7 +6354,6 @@ class ProductsCLI:
             print("\n📦 ORDER INFORMATION:")
             print("-" * 80)
             print(f"Order ID: {order.get('order_id', 'N/A')}")
-            print(f"Order Number: {order.get('order_number', 'N/A')}")
             print(f"Status: {order.get('status', 'N/A')}")
             print(f"Payment Mode: {order.get('payment_mode', 'N/A')}")
             print(f"Created At: {order.get('created_at', 'N/A')}")
